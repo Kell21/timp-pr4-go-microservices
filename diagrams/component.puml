@@ -1,0 +1,23 @@
+@startuml component
+!include <C4/C4_Container>
+
+title Task Manager — диаграмма компонентов (C4, уровень контейнеров)
+
+Person(user, "Пользователь", "Работает со списком задач в браузере")
+
+System_Boundary(app, "Task Manager (docker-compose)") {
+    Container(web, "Web Service", "Go, net/http, html/template", "HTML-страница, статика, HTTP-клиент к API; порт 8080")
+    Container(api, "API Service", "Go, net/http, database/sql", "REST API /api/tasks, бизнес-логика, Repository, миграции; порт 8080 (8081 на хосте)")
+    ContainerDb(db, "PostgreSQL 15", "postgres:15-alpine", "Таблицы tasks и schema_migrations; том pgdata")
+}
+
+System_Ext(ci, "GitHub Actions", "lint, test, build-images, scan (trivy), push")
+System_Ext(registry, "GitHub Container Registry", "ghcr.io/…/api, ghcr.io/…/web")
+
+Rel(user, web, "Открывает страницу, отправляет формы, fetch()", "HTTP")
+Rel(web, api, "GET/POST/PUT/DELETE /api/tasks", "HTTP/JSON")
+Rel(api, db, "SQL-запросы через пул соединений", "TCP 5432")
+Rel(ci, registry, "docker push", "HTTPS")
+
+SHOW_LEGEND()
+@enduml

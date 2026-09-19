@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: taskuser
+      POSTGRES_PASSWORD: taskpass
+      POSTGRES_DB: taskdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskuser -d taskdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: ./api
+    image: ${REGISTRY_IMAGE:-task-manager}/api:latest
+    depends_on:
+      postgres:
+        condition: service_healthy   # api стартует только после готовности БД
+    environment:
+      DB_DSN: "postgres://taskuser:taskpass@postgres:5432/taskdb?sslmode=disable"
+      PORT: "8080"
+    ports:
+      - "8081:8080"                  # REST API доступен с хоста для отладки
+
+  web:
+    build: ./web
+    image: ${REGISTRY_IMAGE:-task-manager}/web:latest
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_URL: "http://api:8080"     # имя сервиса compose используется как хост
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:

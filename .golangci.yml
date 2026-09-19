@@ -1,0 +1,20 @@
+version: "2"
+
+linters:
+  default: standard        # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - gosec                # SAST: поиск уязвимостей
+    - bodyclose            # незакрытые тела HTTP-ответов
+    - errorlint            # сравнение ошибок через errors.Is/As
+    - misspell
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - path: _test\.go
+        linters: [gosec, bodyclose]
+
+formatters:
+  enable:
+    - gofmt

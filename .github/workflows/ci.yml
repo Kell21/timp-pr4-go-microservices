@@ -1,0 +1,156 @@
+# CI/CD Task Manager: lint → test → build-images → scan (+ smoke-тест compose) → push в GHCR.
+# Аналог .gitlab-ci.yml из методических указаний (см. файл .gitlab-ci.yml в корне).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [api, web]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ matrix.service }}/go.mod
+          cache-dependency-path: ${{ matrix.service }}/go.sum
+      - name: gofmt
+        working-directory: ${{ matrix.service }}
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: golangci-lint (включая gosec)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: ${{ matrix.service }}
+          args: --config=../.golangci.yml
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: taskuser
+          POSTGRES_PASSWORD: taskpass
+          POSTGRES_DB: taskdb
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U taskuser -d taskdb"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      TEST_DB_DSN: postgres://taskuser:taskpass@localhost:5432/taskdb?sslmode=disable
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: "*/go.sum"
+      - name: go test (api, в т.ч. интеграционный тест с PostgreSQL)
+        working-directory: api
+        run: go test -v -race -cover ./...
+      - name: go test (web)
+        working-directory: web
+        run: go test -v -race -cover ./...
+
+  build-images:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: docker build
+        run: |
+          docker build -t task-manager/api:latest ./api
+          docker build -t task-manager/web:latest ./web
+          docker image ls task-manager/*
+          docker save task-manager/api:latest -o api.tar
+          docker save task-manager/web:latest -o web.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: images
+          path: "*.tar"
+          retention-days: 3
+
+  scan:
+    needs: build-images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: images
+      - name: trivy (HIGH, CRITICAL)
+        # trivy ставится из репозитория Alpine, как в методичке (apk add trivy)
+        run: |
+          docker run --rm -v "$PWD:/images:ro" alpine:3.22 sh -c '
+            apk add --no-cache trivy >/dev/null &&
+            trivy --version &&
+            for img in api web; do
+              echo "===== $img =====";
+              trivy image --input /images/$img.tar --severity HIGH,CRITICAL \
+                --ignore-unfixed --exit-code 1 --no-progress || exit 1;
+            done'
+
+  compose-smoke:
+    needs: build-images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: images
+      - name: docker compose up
+        run: |
+          docker load -i api.tar && docker load -i web.tar
+          docker compose up -d --no-build --wait --wait-timeout 120
+          docker compose ps
+      - name: сценарий пользователя через Web Service
+        run: |
+          set -e
+          curl -fsS http://localhost:8080/ | grep -q "Task Manager"
+          curl -fsS -o /dev/null -w "POST /tasks -> %{http_code}\n" \
+            --data-urlencode "title=Проверка из CI" http://localhost:8080/tasks
+          curl -fsS http://localhost:8080/ | grep -q "Проверка из CI"
+          curl -fsS -X POST -H "Content-Type: application/json" \
+            -d '{"id":"1","done":true}' http://localhost:8080/tasks/done
+          echo
+          curl -fsS http://localhost:8081/api/tasks | tee /dev/stderr | grep -q '"done":true'
+      - name: логи
+        if: always()
+        run: docker compose logs --no-color
+      - name: docker compose down
+        if: always()
+        run: docker compose down -v
+
+  push:
+    needs: [scan, compose-smoke]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: images
+      - name: docker login ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: docker push
+        run: |
+          REGISTRY_IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          for svc in api web; do
+            docker load -i $svc.tar
+            for tag in latest "${GITHUB_SHA::7}"; do
+              docker tag task-manager/$svc:latest "$REGISTRY_IMAGE/$svc:$tag"
+              docker push "$REGISTRY_IMAGE/$svc:$tag"
+            done
+          done

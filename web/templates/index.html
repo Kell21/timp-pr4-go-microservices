@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Task Manager</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="card">
+    <header>
+        <h1>Task Manager</h1>
+        <p class="stats">Всего задач: <b id="total">{{.Total}}</b> · выполнено: <b id="completed">{{.Completed}}</b></p>
+    </header>
+
+    {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+
+    <form method="post" action="/tasks" class="add">
+        <input type="text" name="title" placeholder="Новая задача" maxlength="200" required autofocus>
+        <button type="submit">Добавить</button>
+    </form>
+
+    <ul class="tasks">
+        {{range .Tasks}}
+        <li data-id="{{.ID}}">
+            <label>
+                <input type="checkbox" data-id="{{.ID}}" {{if .Done}}checked{{end}} class="task-checkbox">
+                <span class="task-title {{if .Done}}done{{end}}">{{.Title}}</span>
+            </label>
+            <time datetime="{{.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.CreatedAt.Local.Format "02.01.2006 15:04"}}</time>
+            <button class="delete" data-id="{{.ID}}" title="Удалить">✕</button>
+        </li>
+        {{else}}
+        <li class="empty">Задач пока нет — добавьте первую.</li>
+        {{end}}
+    </ul>
+    <footer>Web Service → API Service → PostgreSQL</footer>
+</main>
+
+<script>
+    const post = (url, body) => fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    });
+
+    function recount() {
+        const boxes = document.querySelectorAll('.task-checkbox');
+        document.getElementById('total').textContent = boxes.length;
+        document.getElementById('completed').textContent =
+            [...boxes].filter(cb => cb.checked).length;
+    }
+
+    document.querySelectorAll('.task-checkbox').forEach(cb => {
+        cb.addEventListener('change', async () => {
+            const title = cb.closest('li').querySelector('.task-title');
+            const resp = await post('/tasks/done', {id: cb.dataset.id, done: cb.checked});
+            if (!resp.ok) {
+                cb.checked = !cb.checked;           // откат, если API вернул ошибку
+                alert('Не удалось изменить статус: ' + await resp.text());
+            }
+            title.classList.toggle('done', cb.checked);
+            recount();
+        });
+    });
+
+    document.querySelectorAll('.delete').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const resp = await post('/tasks/delete', {id: btn.dataset.id});
+            if (resp.ok) {
+                btn.closest('li').remove();
+                recount();
+            } else {
+                alert('Не удалось удалить задачу: ' + await resp.text());
+            }
+        });
+    });
+</script>
+</body>
+</html>

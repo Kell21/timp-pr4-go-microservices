@@ -1,0 +1,48 @@
+@startuml sequence
+title Task Manager — отметка задачи выполненной
+
+actor "Пользователь" as user
+participant "Браузер\n(index.html + JS)" as browser
+participant "Web Service\nui.Server" as web
+participant "Web Service\nclient.Client" as client
+participant "API Service\nhandlers" as h
+participant "API Service\nTaskService" as svc
+participant "Repository\nPostgresTaskRepository" as repo
+database "PostgreSQL" as db
+
+user -> browser : ставит галочку у задачи
+browser -> web : POST /tasks/done\n{"id":"5","done":true}
+activate web
+web -> client : SetDone(ctx, 5, true)
+activate client
+client -> h : PUT /api/tasks/5\n{"done":true}
+activate h
+h -> svc : Update(ctx, 5, TaskUpdate{Done:true})
+activate svc
+svc -> repo : GetByID(ctx, 5)
+repo -> db : SELECT … FROM tasks WHERE id = $1
+db --> repo : строка задачи
+repo --> svc : domain.Task
+svc -> repo : Update(ctx, task)
+repo -> db : UPDATE tasks SET title=$1, done=$2 WHERE id=$3
+db --> repo : 1 row affected
+repo --> svc : nil
+svc --> h : domain.Task{Done:true}
+deactivate svc
+h --> client : 200 OK + JSON задачи
+deactivate h
+client --> web : client.Task
+deactivate client
+web --> browser : 200 OK
+deactivate web
+browser -> browser : зачёркивает задачу,\nпересчитывает «выполнено»
+
+alt задача не найдена
+    repo --> svc : ErrNotFound
+    svc --> h : ErrNotFound
+    h --> client : 404 {"error":"task not found"}
+    client --> web : client.ErrNotFound
+    web --> browser : 404
+    browser -> browser : откатывает чекбокс, alert()
+end
+@enduml
