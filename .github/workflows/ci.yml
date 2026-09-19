@@ -29,7 +29,7 @@ jobs:
         working-directory: ${{ matrix.service }}
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: golangci-lint (включая gosec)
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
           working-directory: ${{ matrix.service }}
@@ -75,7 +75,7 @@ jobs:
           docker image ls task-manager/*
           docker save task-manager/api:latest -o api.tar
           docker save task-manager/web:latest -o web.tar
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: images
           path: "*.tar"
@@ -85,14 +85,17 @@ jobs:
     needs: build-images
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           name: images
       - name: trivy (HIGH, CRITICAL)
-        # trivy ставится из репозитория Alpine, как в методичке (apk add trivy)
+        # trivy ставится из репозитория Alpine, как в методичке (apk add trivy);
+        # в стабильных ветках Alpine пакета нет, поэтому используется alpine:edge
         run: |
-          docker run --rm -v "$PWD:/images:ro" alpine:3.22 sh -c '
-            apk add --no-cache trivy >/dev/null &&
+          docker run --rm -v "$PWD:/images:ro" alpine:edge sh -c '
+            apk add --no-cache trivy \
+              --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
+              --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing >/dev/null &&
             trivy --version &&
             for img in api web; do
               echo "===== $img =====";
@@ -105,7 +108,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           name: images
       - name: docker compose up
@@ -139,7 +142,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           name: images
       - name: docker login ghcr.io

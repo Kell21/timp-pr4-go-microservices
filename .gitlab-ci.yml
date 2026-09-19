@@ -51,9 +51,9 @@ build-images:
 
 scan:
   stage: scan
-  image: alpine:3.22
+  image: alpine:edge
   script:
-    - apk add --no-cache trivy
+    - apk add --no-cache trivy --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
     - trivy image --input api.tar --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
     - trivy image --input web.tar --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
 
